@@ -27,7 +27,7 @@ def build_finger_table():
         start = (self.id + (2 ** i)) % (2 ** m)
         f = Finger(
                 start,
-                range(start, (self.id + (2 ** (i + 1)))),
+                range(start, (self.id + (2 ** (i + 1))) % (2 ** m)),
                 None
                 )
         finger_table.append(f)
