@@ -55,7 +55,7 @@ def bitsof(bt, nbits):
     # as needed, but no more
     neededbytes = (nbits+7)//8
     if neededbytes > len(bt):
-        raise ValueError("Require {} bytes, received {}".format(neededbytes, len(bt))) 
+        raise ValueError("Require {} bytes, received {}".format(neededbytes, len(bt)))
     i = int.from_bytes(bt[:neededbytes], 'big')
     # If there were a non-byte aligned number of bits requested,
     # shift off the excess from the right (which came from the last byte processed)
