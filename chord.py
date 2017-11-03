@@ -1,8 +1,13 @@
 import requests
 import sys
+import json
 import hashlib
-from flask import Flask
+import logging
+from flask import Flask, request, jsonify
 from collections import namedtuple
+from threading import Thread
+from time import sleep
+from random import randint
 
 # Should be called:
 # $ python3 chord.py m PORT_TO_LISTEN optional: HOST_TO_JOIN PORT_TO_JOIN
@@ -16,14 +21,50 @@ class Finger:
         self.range = range
         self.successor = successor
 
+class MaintenanceThread(Thread):
+    def __init__(self):
+        Thread.__init__(self)
+
+    def run(self):
+        delay = 30
+        while True:
+            sleep(delay)
+            log.info('stabilizing')
+            stabilize()
+            fix_fingers()
+            log.debug('Finger Table:')
+            for finger in finger_table:
+                log.debug(finger.__dict__)
+
 m            = 0
 self         = None
 predeccessor = None
 finger_table = []
 
+def chord_range(*args):
+    log.debug('chord_range() called on: {}'.format(args))
+    if args[1] is not None:
+        min = args[0]
+        max = args[1]
+    else:
+        min = 0
+        max = args[1]
+    loop = 2 ** m
+    if max < loop and max > min:
+        return list(range(min, max))
+    elif min > loop:
+        return []
+    else:
+        return list(range(min, loop)) + list(range(0, max))
+
+log = logging.getLogger('chord')
+logging.basicConfig()
+log.setLevel(logging.DEBUG)
+log.info('test')
+
 def build_finger_table():
     global finger_table
-    for i in range(0, m - 1):
+    for i in range(m - 1):
         start = (self.id + (2 ** i)) % (2 ** m)
         f = Finger(
                 start,
@@ -38,6 +79,7 @@ def build_finger_table():
             None
             )
     finger_table.append(last_finger)
+    log.debug('Finger table built.')
 
 """
 I got stuck on converting the first n bit to a integer for a while. So I posted
@@ -73,28 +115,37 @@ def get_id(host, port):
     return bitsof(digest, m)
     # Once again: bitsof() is not my code, and I TAKE NO CREDIT FOR IT.
 
-def request_node(action, params=None):
+def request_node(node, action, params=None):
+    log.info('requesting node from http://{}:{}/{}'.format(node.host, node.port, action))
     resp = requests.get(
-            '{}:{}/{}'.format(node.host, node.port, action),
+            'http://{}:{}/{}'.format(node.host, node.port, action),
             params=params
             )
     j = resp.json()
     return Node(
             j['id'],
             j['host'],
-            j['successor']
+            j['port']
             )
 
-def set_node(action, node):
+def set_node(node, action, node_to_set):
     d = { # TODO I can probably do this implicitly
-            'id' : node.id,
-            'host' : node.host,
-            'successor' : node.successor
+            'id' : node_to_set.id,
+            'host' : node_to_set.host,
+            'port' : node_to_set.port
             }
-    requests.post(
-            '{}:{}/{}'.format(node.host, node.port, action),
+    log.info('posting {} to http://{}:{}/{}'.format(
+        d,
+        node.host,
+        node.port,
+        action
+        )
+        )
+    r = requests.post(
+            'http://{}:{}/{}'.format(node.host, node.port, action),
             data=d
             )
+    log.debug('post request returned status code: {}'.format(r.status_code))
     
 def initialize():
     global m, port, self
@@ -105,7 +156,7 @@ def initialize():
             '127.0.0.1',
             port
             )
-    print(self)
+    log.info('initialized self as {}'.format(self))
     build_finger_table()
     
     if len(sys.argv) > 3:
@@ -120,40 +171,188 @@ def initialize():
     else:
         join(None)
 
+    log.info('Finger Table:')
     for finger in finger_table:
-        print(finger.__dict__)
+        log.info(finger.__dict__)
+
+    MaintenanceThread().start()
     app.run(host='127.0.0.1', port=self.port)
 
 def join(node):
+    log.debug('join() called')
+    global finger_table, predeccessor
     if node:
+        log.debug('About to init finger table')
         init_finger_table(node)
         # TODO Maybe call update others here.
     else:
         for finger in finger_table:
             finger.successor = self
         predeccessor = self
+    log.debug('join() done, predeccessor = {}'.format(predeccessor))
 
 def init_finger_table(node):
+    global finger_table, predeccessor
     finger_table[0].successor = request_node(
+            node,
             'find_successor',
             {'id' : self.id}
             )
+    log.info('successor = {}'.format(finger_table[0].successor._asdict()))
     predeccessor = request_node(
+            node,
             'predeccessor'
             )
-    set_node('predeccessor', self)
-    for i in xrange(0, m - 1):
-        if finger_table[i + 1].start in range(self.id, finger_table[i].node.id):
-            finger_table[i + 1].node = finger_table[i].node
+    set_node(node, 'predeccessor', self)
+    for i in range(0, m - 1):
+        log.debug('made finger {}'.format(finger_table[i].__dict__))
+        if finger_table[i + 1].start in chord_range(self.id, finger_table[i].successor.id):
+            finger_table[i + 1].successor = finger_table[i].successor
         else:
-            finger_table[i + 1].node = request_node(
+            finger_table[i + 1].successor = request_node(
+                    node, 
                     'find_successor',
                     {'id' : finger_table[i + 1].start}
                     )
+    log.info('Finger table initialized') # This isn't getting printed, I have no idea why
 
-@app.route("/")
-def hello():
-    return "Hello World!"
+def check_predeccessor():
+    global finger_table
+    log.debug('check_predeccessor called')
+    if finger_table[0].successor == self:
+        x = predeccessor
+    else:
+        x = request_node(
+                finger_table[0].successor,
+                'predeccessor'
+                )
+    log.debug('potential successor = {}'.format(x))
+    if x.id in chord_range(self.id + 1, finger_table[0].successor.id):
+        finger_table[0].successor = x
+        log.info('New successor: {}'.format(x.id))
+        # check_predeccessor()
+        """
+        That last line in not in the original spec, but it covers the case
+        where multiple nodes have joined between us and out successor. Which
+        seems like it may happen, and it only adds constant time.
+        """
+
+def stabilize():
+    check_predeccessor()
+    set_node(
+            finger_table[0].successor,
+            'notify',
+            self
+            )
+
+def fix_fingers():
+    i = randint(1, m - 1)
+    log.info('Fixing finger {}'.format(finger_table[i].__dict__))
+    finger_table[i].successor = _find_successor(finger_table[i].start)
+    log.info('Finger is now {}'.format(finger_table[i].__dict__))
+
+def _closest_preceding_finger(key):
+    for finger in reversed(finger_table):
+        if finger.successor.id in chord_range(self.id + 1, key):
+            return finger.successor
+    return self
+
+def _find_successor(key):
+    log.info('lookfing for successor of {}'.format(key))
+    pred =  _find_predeccessor(key)
+    if pred == self:
+        succ = finger_table[0].successor
+        log.info('successor found: {}'.format(succ))
+        return succ
+    else:
+        succ = request_node(
+                pred,
+                'successor'
+                )
+        log.info('successor found: {}'.format(succ.id))
+        return succ
+
+def _find_predeccessor(key):
+    log.info('find_predeccessor() called for key {}'.format(key))
+    if predeccessor == self:
+        return self
+    if key in chord_range(self.id + 1, finger_table[0].successor.id + 1):
+        log.info('found predeccessor {}'.format(finger_table[0].successor.id))
+        return finger_table[0].successor
+    node = _closest_preceding_finger(key)
+    if node == self:
+        succ = finger_table[0].successor
+    else:
+        succ = request_node(
+                node,
+                'successor'
+                )
+
+    while key not in chord_range(node.id + 1, succ.id + 1):
+        log.debug('checking if {} holds the key'.format(node.id))
+        if node == self:
+            node = _closest_preceding_finger(key)
+            succ = finger_table[0].successor
+        else:
+            node = request_node(
+                    node,
+                    'closest_preceding_finger',
+                    {'id' : key}
+                    )
+            succ = request_node(
+                    node,
+                    'successor'
+                    )
+    log.info('found predeccessor {}'.format(node.id))
+    return node
+
+def _notify(node):
+    global predeccessor
+    if node.id in chord_range(predeccessor.id, self.id):
+        predeccessor = node
+
+@app.route("/find_successor")
+def find_successor():
+    log.info('find_successor endpoint called')
+    key = int(request.args.get('id'))
+    return jsonify(_find_successor(key)._asdict())
+
+@app.route("/successor")
+def successor():
+    return jsonify(finger_table[0].successor._asdict())
+
+@app.route("/predeccessor", methods=['GET', 'POST'])
+def predeccessor():
+    global predeccessor
+    if request.method == 'POST':
+        log.info('predecessor endpoint called with: {}'.format(request.form))
+        data = request.form
+        new_p = Node(
+                int(data['id']),
+                data['host'],
+                data['port']
+                )
+        predeccessor = new_p
+    return jsonify(predeccessor._asdict())
+
+@app.route("/closest_preceding_finger")
+def closest_preceding_finger():
+    key = int(request.args.get('id'))
+    return jsonify(_closest_preceding_finger(key)._asdict())
+
+@app.route("/notify", methods=['POST'])
+def notify():
+    data = request.form
+    log.info('Notify endpoint called with {}'.format(data))
+    node = Node(
+            data['id'],
+            data['host'],
+            data['port']
+            )
+    log.debug('predeccessor was: {}'.format(predeccessor))
+    _notify(node)
+    log.debug('predeccessor is now: {}'.format(predeccessor))
+    return json.dumps(True)
 
 if __name__ == '__main__':
     initialize()
