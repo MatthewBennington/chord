@@ -15,11 +15,14 @@ from random import randint
 app = Flask(__name__)
 
 Node = namedtuple('Node', 'id host port')
+
+
 class Finger:
     def __init__(self, start, range, successor):
         self.start = start
         self.range = range
         self.successor = successor
+
 
 class MaintenanceThread(Thread):
     def __init__(self):
@@ -36,10 +39,12 @@ class MaintenanceThread(Thread):
             for finger in finger_table:
                 log.debug(finger.__dict__)
 
+
 m            = 0
 self         = None
 predeccessor = None
 finger_table = []
+
 
 def chord_range(*args):
     log.debug('chord_range() called on: {}'.format(args))
@@ -57,10 +62,15 @@ def chord_range(*args):
     else:
         return list(range(min, loop)) + list(range(0, max))
 
+
 log = logging.getLogger('chord')
-logging.basicConfig()
+logging.basicConfig(
+    format='%(asctime)s %(levelname)-8s %(message)s',
+    level=logging.INFO,
+    datefmt='%Y-%m-%d %H:%M:%S')
 log.setLevel(logging.DEBUG)
 log.info('test')
+
 
 def build_finger_table():
     global finger_table
@@ -74,12 +84,13 @@ def build_finger_table():
         finger_table.append(f)
 
     last_finger = Finger(
-            self.id + (2 ** (m - 1) % (2 ** m)),
-            range(self.id + (2 ** (m - 1) % (2 ** m)), self.id),
+            (self.id + (2 ** (m - 1))) % (2 ** m),
+            range((self.id + (2 ** (m - 1))) % (2 ** m), self.id),
             None
             )
     finger_table.append(last_finger)
     log.debug('Finger table built.')
+
 
 """
 I got stuck on converting the first n bit to a integer for a while. So I posted
@@ -106,6 +117,13 @@ def bitsof(bt, nbits):
     return i
 # End of not my code
 
+
+def debug_finger_table():
+    log.debug('Finger table:')
+    for finger in finger_table:
+        log.debug(finger.__dict__)
+
+
 def get_id(host, port):
     b_str = (host + str(port)).encode()
     # This is my solution without help:
@@ -114,6 +132,7 @@ def get_id(host, port):
     digest = hashlib.sha1(b_str).digest()
     return bitsof(digest, m)
     # Once again: bitsof() is not my code, and I TAKE NO CREDIT FOR IT.
+
 
 def request_node(node, action, params=None):
     log.info('requesting node from http://{}:{}/{}'.format(node.host, node.port, action))
@@ -128,11 +147,12 @@ def request_node(node, action, params=None):
             j['port']
             )
 
+
 def set_node(node, action, node_to_set):
     d = { # TODO I can probably do this implicitly
-            'id' : node_to_set.id,
-            'host' : node_to_set.host,
-            'port' : node_to_set.port
+            'id': node_to_set.id,
+            'host': node_to_set.host,
+            'port': node_to_set.port
             }
     log.info('posting {} to http://{}:{}/{}'.format(
         d,
@@ -146,7 +166,8 @@ def set_node(node, action, node_to_set):
             data=d
             )
     log.debug('post request returned status code: {}'.format(r.status_code))
-    
+
+
 def initialize():
     global m, port, self
     m = int(sys.argv[1])
@@ -158,7 +179,7 @@ def initialize():
             )
     log.info('initialized self as {}'.format(self))
     build_finger_table()
-    
+
     if len(sys.argv) > 3:
         host_to_join = sys.argv[3]
         port_to_join = int(sys.argv[4])
@@ -171,12 +192,13 @@ def initialize():
     else:
         join(None)
 
-    log.info('Finger Table:')
+    log.info('Finger Table after initialization:')
     for finger in finger_table:
         log.info(finger.__dict__)
 
     MaintenanceThread().start()
     app.run(host='127.0.0.1', port=self.port)
+
 
 def join(node):
     log.debug('join() called')
@@ -190,17 +212,19 @@ def join(node):
             finger.successor = self
         predeccessor = self
     log.debug('join() done, predeccessor = {}'.format(predeccessor))
+    debug_finger_table()
+
 
 def init_finger_table(node):
     global finger_table, predeccessor
     finger_table[0].successor = request_node(
             node,
             'find_successor',
-            {'id' : self.id}
+            {'id': self.id}
             )
     log.info('successor = {}'.format(finger_table[0].successor._asdict()))
     predeccessor = request_node(
-            node,
+            finger_table[0].successor,
             'predeccessor'
             )
     set_node(node, 'predeccessor', self)
@@ -212,14 +236,17 @@ def init_finger_table(node):
             finger_table[i + 1].successor = request_node(
                     node, 
                     'find_successor',
-                    {'id' : finger_table[i + 1].start}
+                    {'id': finger_table[i + 1].start}
                     )
-    log.info('Finger table initialized') # This isn't getting printed, I have no idea why
+    log.info('Finger table initialized')
+    debug_finger_table()
+
 
 def check_predeccessor():
     global finger_table
     log.debug('check_predeccessor called')
     if finger_table[0].successor == self:
+        # This is just so we don't waste time makign a request to ourselves.
         x = predeccessor
     else:
         x = request_node(
@@ -227,7 +254,13 @@ def check_predeccessor():
                 'predeccessor'
                 )
     log.debug('potential successor = {}'.format(x))
-    if x.id in chord_range(self.id + 1, finger_table[0].successor.id):
+    if (self.id == finger_table[0].successor.id):
+        finger_table[0].successor = x
+    elif (
+            x.id + 1 != finger_table[0].successor.id and
+            x.id in chord_range(self.id + 1, finger_table[0].successor.id)
+        ):
+        log.debug('Node {} is within {}'.format(x.id, chord_range(self.id + 1, finger_table[0].successor.id)))
         finger_table[0].successor = x
         log.info('New successor: {}'.format(x.id))
         # check_predeccessor()
@@ -236,14 +269,21 @@ def check_predeccessor():
         where multiple nodes have joined between us and out successor. Which
         seems like it may happen, and it only adds constant time.
         """
+    else:
+        log.debug('Predeccessor was not changed.')
+    debug_finger_table()
+
 
 def stabilize():
+    log.info('stablize() called')
     check_predeccessor()
     set_node(
             finger_table[0].successor,
             'notify',
             self
             )
+    debug_finger_table()
+
 
 def fix_fingers():
     i = randint(1, m - 1)
@@ -251,15 +291,17 @@ def fix_fingers():
     finger_table[i].successor = _find_successor(finger_table[i].start)
     log.info('Finger is now {}'.format(finger_table[i].__dict__))
 
+
 def _closest_preceding_finger(key):
     for finger in reversed(finger_table):
         if finger.successor.id in chord_range(self.id + 1, key):
             return finger.successor
     return self
 
+
 def _find_successor(key):
     log.info('lookfing for successor of {}'.format(key))
-    pred =  _find_predeccessor(key)
+    pred = _find_predeccessor(key)
     if pred == self:
         succ = finger_table[0].successor
         log.info('successor found: {}'.format(succ))
@@ -272,13 +314,12 @@ def _find_successor(key):
         log.info('successor found: {}'.format(succ.id))
         return succ
 
+
 def _find_predeccessor(key):
     log.info('find_predeccessor() called for key {}'.format(key))
-    if predeccessor == self:
-        return self
-    if key in chord_range(self.id + 1, finger_table[0].successor.id + 1):
-        log.info('found predeccessor {}'.format(finger_table[0].successor.id))
-        return finger_table[0].successor
+    #if key in chord_range(self.id + 1, finger_table[0].successor.id + 1):
+        #log.info('found predeccessor {}'.format(finger_table[0].successor.id))
+        #return finger_table[0].successor
     node = _closest_preceding_finger(key)
     if node == self:
         succ = finger_table[0].successor
@@ -292,12 +333,15 @@ def _find_predeccessor(key):
         log.debug('checking if {} holds the key'.format(node.id))
         if node == self:
             node = _closest_preceding_finger(key)
-            succ = finger_table[0].successor
+            succ = request_node(
+                    node,
+                    'successor'
+                    )
         else:
             node = request_node(
                     node,
                     'closest_preceding_finger',
-                    {'id' : key}
+                    {'id': key}
                     )
             succ = request_node(
                     node,
@@ -306,10 +350,27 @@ def _find_predeccessor(key):
     log.info('found predeccessor {}'.format(node.id))
     return node
 
+
 def _notify(node):
     global predeccessor
     if node.id in chord_range(predeccessor.id, self.id):
+        log.debug(
+                '{} is within {}'.format(
+                    node.id,
+                    chord_range(predeccessor.id, self.id)
+                    )
+                )
         predeccessor = node
+        log.info('predeccessor is now: {}'.format(predeccessor))
+    else:
+        log.debug(
+                '{} is not within {}'.format(
+                    node.id,
+                    chord_range(predeccessor.id, self.id)
+                    )
+                )
+        log.debug('predeccessor is unchanged.')
+
 
 @app.route("/find_successor")
 def find_successor():
@@ -317,9 +378,11 @@ def find_successor():
     key = int(request.args.get('id'))
     return jsonify(_find_successor(key)._asdict())
 
+
 @app.route("/successor")
 def successor():
     return jsonify(finger_table[0].successor._asdict())
+
 
 @app.route("/predeccessor", methods=['GET', 'POST'])
 def predeccessor():
@@ -335,24 +398,26 @@ def predeccessor():
         predeccessor = new_p
     return jsonify(predeccessor._asdict())
 
+
 @app.route("/closest_preceding_finger")
 def closest_preceding_finger():
     key = int(request.args.get('id'))
     return jsonify(_closest_preceding_finger(key)._asdict())
+
 
 @app.route("/notify", methods=['POST'])
 def notify():
     data = request.form
     log.info('Notify endpoint called with {}'.format(data))
     node = Node(
-            data['id'],
+            int(data['id']),
             data['host'],
             data['port']
             )
     log.debug('predeccessor was: {}'.format(predeccessor))
     _notify(node)
-    log.debug('predeccessor is now: {}'.format(predeccessor))
     return json.dumps(True)
+
 
 if __name__ == '__main__':
     initialize()
