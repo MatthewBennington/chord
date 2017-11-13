@@ -139,11 +139,11 @@ def bitsof(bt, nbits):
 
 
 def dump_info():
-    print({
+    print('state: {}'.format(json.dumps({
             'id': self.id,
             'successor': finger_table[0].successor.id,
             'predeccessor': predeccessor.id
-            })
+            })))
     log.debug('Finger table:')
     for finger in finger_table:
         log.debug(finger.__dict__)
