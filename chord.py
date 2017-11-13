@@ -18,6 +18,16 @@ Node = namedtuple('Node', 'id host port')
 
 
 class Finger:
+    """
+    Finger class, used for finger table entries.
+    I would have prefered to use a named tuple here, but we need to change the
+    successor sometimes. For logging, I find `.__dict__` to be useful.
+
+    Params:
+        start (int): The start value of that finger entry.
+        range (range | list): The range of values in this entry.
+        successor (Node): The Node holding this entry.
+    """
     def __init__(self, start, range, successor):
         self.start = start
         self.range = range
@@ -47,6 +57,17 @@ finger_table = []
 
 
 def chord_range(*args):
+    """
+    Returns a list containing a looping range, as required by chord.
+    For example:
+        if m=3, then:
+        chord_range(5, 2) would return:
+        [5, 6, 7, 0, 1]
+    Params:
+        1 param will return chord_range(0, arg).
+        2 params will result in the above example.
+        all following params will be ignored.
+    """
     log.debug('chord_range() called on: {}'.format(args))
     if args[1] is not None:
         min = args[0]
@@ -69,7 +90,6 @@ logging.basicConfig(
     level=logging.INFO,
     datefmt='%Y-%m-%d %H:%M:%S')
 log.setLevel(logging.DEBUG)
-log.info('test')
 
 
 def build_finger_table():
@@ -118,7 +138,12 @@ def bitsof(bt, nbits):
 # End of not my code
 
 
-def debug_finger_table():
+def dump_info():
+    print({
+            'id': self.id,
+            'successor': finger_table[0].successor.id,
+            'predeccessor': predeccessor.id
+            })
     log.debug('Finger table:')
     for finger in finger_table:
         log.debug(finger.__dict__)
@@ -212,7 +237,7 @@ def join(node):
             finger.successor = self
         predeccessor = self
     log.debug('join() done, predeccessor = {}'.format(predeccessor))
-    debug_finger_table()
+    dump_info()
 
 
 def init_finger_table(node):
@@ -239,7 +264,7 @@ def init_finger_table(node):
                     {'id': finger_table[i + 1].start}
                     )
     log.info('Finger table initialized')
-    debug_finger_table()
+    dump_info()
 
 
 def check_predeccessor():
@@ -271,7 +296,7 @@ def check_predeccessor():
         """
     else:
         log.debug('Predeccessor was not changed.')
-    debug_finger_table()
+    dump_info()
 
 
 def stabilize():
@@ -282,7 +307,7 @@ def stabilize():
             'notify',
             self
             )
-    debug_finger_table()
+    dump_info()
 
 
 def fix_fingers():
